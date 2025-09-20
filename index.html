@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ドローン版PID制御シミュレータ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chosen Palette: Sky Blue Tech -->
+    <!-- Application Structure Plan: ドローンの高度維持を題材にPID制御を体験させる。UIは台車シミュレータの構成を踏襲し、パラメータ調整、スコア機能、シナリオを継承。物理モデルを「推力 - 重力 - 空気抵抗」に変更し、常に重力がかかる環境での制御の難しさ、特にI制御（積分）が重力を補償して定常偏差をなくす役割を可視化する。 -->
+    <!-- Visualization & Content Choices:
+        - PID制御ロジック -> Goal:制御則の理解 -> Viz:ブロック図と解説 -> Justification:PIDの3要素がどう組み合わさって推力を決定するかを視覚的に示すため。
+        - Kp, Ki, Kd -> Goal:ユーザーによる自由な調整 -> Viz:スライダーと数値入力 -> Justification:直感的な操作と精密な調整を両立し、パラメータが応答に与える影響を探求させるため。
+        - 応答グラフ -> Goal:システムの応答を可視化 -> Viz:Chart.js折れ線グラフ（2軸） -> Interaction:動的更新 -> Justification:時間経過に伴う高度と推力の変化を同時に表示し、制御動作と結果の因果関係を明確にするため。
+        - ドローンアニメーション -> Goal:物理的な動きの直感的理解 -> Viz:HTML/CSS/JSアニメーション -> Interaction:シミュレーションと同期 -> Justification:グラフの抽象的な動きを、具体的なドローンの上下動として視覚化し、学習効果を高めるため。
+        - スコア機能 -> Goal:学習意欲の向上 -> Viz:動的テキスト -> Justification:制御性能を「得点」として客観的に評価することで、最適なパラメータ調整を探求する動機付けとするため。 -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Hiragino Sans', 'Meiryo', sans-serif;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            max-height: 60vh;
+        }
+        #drone {
+            font-size: 40px;
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            transition: bottom 0.05s linear;
+        }
+    </style>
+</head>
+<body class="bg-stone-50 text-stone-800">
+
+    <header class="bg-white shadow-md sticky top-0 z-10">
+        <div class="container mx-auto px-6 py-4">
+            <h1 class="text-2xl font-bold text-blue-700">ドローン版PID制御シミュレータ</h1>
+            <p class="text-stone-600 mt-1">ドローンの高度維持を通じて、PID制御の力を体験しよう。</p>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-6 py-8">
+
+        <section id="concept" class="mb-12">
+            <h2 class="text-2xl font-semibold border-b-2 border-blue-200 pb-2 mb-4">1. ドローンのPID制御</h2>
+            <p class="mb-6">
+                ドローンは、常に下向きに働く**重力**に逆らって飛行する必要があります。PID制御は、目標高度との偏差（ズレ）から、重力や空気抵抗、突発的な風（外乱）などを考慮した最適な推力（プロペラの上昇力）を計算し、高度を安定させます。
+            </p>
+        </section>
+
+        <section id="simulation" class="mb-12">
+            <h2 class="text-2xl font-semibold border-b-2 border-blue-200 pb-2 mb-4">2. シミュレーションで体験する</h2>
+            <p class="mb-6">
+                Kp, Ki, Kdの各ゲインを調整して、最高のスコア（速さ・正確さ・安定性の総合評価）を目指しましょう。
+            </p>
+            <div class="flex flex-col lg:flex-row gap-8">
+                <!-- Visuals -->
+                <div class="lg:flex-1 bg-white p-6 rounded-lg shadow-lg">
+                     <h3 class="text-xl font-semibold mb-4 text-center">応答グラフ</h3>
+                    <div class="chart-container">
+                        <canvas id="responseChart"></canvas>
+                    </div>
+                    <div class="mt-2 text-base sm:text-lg text-center flex flex-wrap justify-center items-center">
+                        <div class="mx-2 my-1">
+                            <span>経過時間: </span>
+                            <span id="elapsed-time-value" class="font-bold text-gray-700 tabular-nums w-12 inline-block text-left">0.0</span>
+                            <span class="text-sm">s</span>
+                        </div>
+                        <div class="mx-2 my-1">
+                            <span>高度: </span>
+                            <span id="altitude-value" class="font-bold text-blue-600 tabular-nums w-20 inline-block text-left">0.00</span>
+                            <span class="text-sm">m</span>
+                        </div>
+                        <div class="mx-2 my-1">
+                            <span>偏差: </span>
+                            <span id="deviation-display-value" class="font-bold text-blue-600 tabular-nums w-20 inline-block text-left">+0.000</span>
+                            <span class="text-sm">m</span>
+                        </div>
+                        <div class="mx-2 my-1">
+                            <span>推力: </span>
+                            <span id="control-input-value" class="font-bold text-red-600 tabular-nums w-28 inline-block text-left">+0.0% (+0.0N)</span>
+                        </div>
+                        <div class="mx-2 my-1">
+                            <span>外乱: </span>
+                            <span id="disturbance-display-value" class="font-bold text-orange-600 tabular-nums w-16 inline-block text-left">+0.0</span>
+                            <span class="text-sm">N</span>
+                        </div>
+                    </div>
+                     <h3 class="text-xl font-semibold my-4 text-center">ドローンの動き</h3>
+                     <div id="animation-container" class="relative w-24 h-96 mx-auto bg-sky-100 rounded-lg overflow-hidden border">
+                        <div id="target-zone" class="absolute w-full bg-green-500/20"></div>
+                        <div id="target-marker-line" class="absolute w-full border-t-2 border-dashed border-green-500"></div>
+                        <div id="drone" style="bottom: 0;">🚁</div>
+                        <div class="absolute bottom-1 right-1 text-xs text-stone-500">0m</div>
+                        <div class="absolute top-1 right-1 text-xs text-stone-500">40m</div>
+                     </div>
+                </div>
+                <!-- Controls -->
+                <div class="lg:w-96 bg-white p-6 rounded-lg shadow-lg">
+                    <h3 class="text-xl font-semibold mb-4">パラメータ設定</h3>
+                    <div id="pid-game-info" class="mb-4 p-3 bg-blue-50 rounded-lg text-center">
+                        <div class="text-sm text-stone-500">総合スコア</div>
+                        <div id="pid-game-score" class="text-2xl font-bold text-blue-700">0</div>
+                        <div id="pid-game-result" class="mt-2 text-xs font-bold text-blue-800 h-6 flex justify-around"></div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <div class="flex justify-between items-center mb-1">
+                             <label for="kp-slider" class="font-medium">比例ゲイン (Kp):</label>
+                             <input type="number" id="kp-input" min="0" max="30" step="0.1" value="1.0" class="w-20 rounded border-stone-300 text-center">
+                        </div>
+                        <input type="range" id="kp-slider" min="0" max="30" step="0.1" value="1.0" class="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <div class="mb-6">
+                        <div class="flex justify-between items-center mb-1">
+                            <label for="ki-slider" class="font-medium">積分ゲイン (Ki):</label>
+                            <input type="number" id="ki-input" min="0" max="20" step="0.1" value="0.0" class="w-20 rounded border-stone-300 text-center">
+                        </div>
+                        <input type="range" id="ki-slider" min="0" max="20" step="0.1" value="0.0" class="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <div class="mb-6">
+                        <div class="flex justify-between items-center mb-1">
+                            <label for="kd-slider" class="font-medium">微分ゲイン (Kd):</label>
+                            <input type="number" id="kd-input" min="0" max="30" step="0.1" value="0.0" class="w-20 rounded border-stone-300 text-center">
+                        </div>
+                        <input type="range" id="kd-slider" min="0" max="30" step="0.1" value="0.0" class="w-full h-2 bg-stone-200 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <hr class="my-6">
+                    <div class="mb-6 text-sm">
+                        <p>目標高度: <span class="font-bold">10.0 m</span></p>
+                        <p>ドローン質量: <span class="font-bold">0.5 kg</span></p>
+                        <p>空気抵抗係数: <span class="font-bold">0.2</span></p>
+                    </div>
+
+                    <div class="bg-stone-100 p-4 rounded-lg">
+                        <h4 class="font-semibold mb-2">外乱設定 (突風)</h4>
+                        <div class="flex justify-between items-center">
+                            <button id="disturbance-toggle-btn" class="px-4 py-2 rounded-lg text-white font-semibold w-full">
+                                外乱: <span id="disturbance-state-text">OFF</span>
+                            </button>
+                        </div>
+                        <div class="text-sm text-stone-600 mt-2 text-center">
+                            <span>力: -15.0 N (下向き)</span>, 
+                            <span>時間: 10.0 s から</span>
+                        </div>
+                    </div>
+                    
+                    <button id="run-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-300 mt-6">
+                        シミュレーション実行
+                    </button>
+                     <div id="score-history" class="mt-4 text-left">
+                        <div class="flex justify-between items-center mb-2">
+                            <h4 class="font-semibold">スコア履歴 (最新10回)</h4>
+                            <button id="reset-scores-btn" class="text-xs text-blue-600 hover:text-blue-800 underline">リセット</button>
+                        </div>
+                        <ol id="score-list" class="list-decimal list-inside text-sm text-stone-600 h-24 overflow-y-auto bg-stone-50 p-2 rounded"></ol>
+                        <div id="average-score-display" class="mt-2 text-center font-bold">平均スコア: --</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section class="mb-12">
+            <button id="toggle-scenarios-btn" class="w-full text-left font-semibold text-xl text-blue-800 p-3 bg-blue-100 rounded-lg hover:bg-blue-200 transition">
+                シナリオを開く ▼
+            </button>
+            <div id="scenarios-container" class="hidden mt-4">
+                <p class="mb-6">
+                    ボタンを押して、典型的な応答パターンを観察してみましょう。
+                </p>
+                <div class="flex flex-wrap gap-4 mb-6">
+                    <button data-kp="5" data-ki="0" data-kd="0" data-disturbance="off" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ1: P制御 (弱)</button>
+                    <button data-kp="20" data-ki="0" data-kd="0" data-disturbance="off" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ2: P制御 (強)</button>
+                    <button data-kp="20" data-ki="0" data-kd="15" data-disturbance="off" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ3: PD制御 (振動抑制)</button>
+                    <button data-kp="15" data-ki="10" data-kd="15" data-disturbance="off" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ4: PID制御 (最適)</button>
+                    <button data-kp="20" data-ki="0" data-kd="0" data-disturbance="on" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ5: P制御 + 外乱</button>
+                    <button data-kp="20" data-ki="0" data-kd="15" data-disturbance="on" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ6: PD制御 + 外乱</button>
+                    <button data-kp="20" data-ki="10" data-kd="15" data-disturbance="on" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ7: PID制御 + 外乱</button>
+                    <button data-kp="25" data-ki="10" data-kd="20" data-disturbance="off" class="scenario-btn bg-white border border-stone-300 px-4 py-2 rounded-lg hover:bg-stone-100 hover:border-blue-500 transition">シナリオ8: PID制御 (高スコア)</button>
+                </div>
+                <div id="scenario-explanation" class="bg-blue-50 p-6 rounded-lg border border-blue-200 min-h-[100px]">
+                    <h4 class="font-bold text-lg text-blue-800 mb-2">解説</h4>
+                    <p>上のボタンを押して、各シナリオの解説を表示します。</p>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <footer class="bg-white mt-12 py-6 border-t">
+        <div class="container mx-auto px-6 text-center text-stone-500">
+            <p>&copy; 2025 Interactive Control Simulator. All Rights Reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        const controls = {
+            kp: { slider: document.getElementById('kp-slider'), input: document.getElementById('kp-input') },
+            ki: { slider: document.getElementById('ki-slider'), input: document.getElementById('ki-input') },
+            kd: { slider: document.getElementById('kd-slider'), input: document.getElementById('kd-input') },
+        };
+
+        const runButton = document.getElementById('run-button');
+        const scenarioButtons = document.querySelectorAll('.scenario-btn');
+        const chartCanvas = document.getElementById('responseChart');
+        const droneEl = document.getElementById('drone');
+        const resetScoresBtn = document.getElementById('reset-scores-btn');
+        const disturbanceToggleBtn = document.getElementById('disturbance-toggle-btn');
+        const disturbanceStateText = document.getElementById('disturbance-state-text');
+        const explanationDiv = document.getElementById('scenario-explanation');
+        const toggleScenariosBtn = document.getElementById('toggle-scenarios-btn');
+        const scenariosContainer = document.getElementById('scenarios-container');
+
+        let responseChart = null;
+        let animationFrameId = null;
+        let scoreHistory = [];
+        let isDisturbanceOn = false;
+        const targetAltitude = 10.0;
+        const targetZoneThreshold = 1.0;
+        const maxThrust = 20.0; // For percentage display
+
+        const explanations = {
+            'default': { title: '解説', text: '上のボタンを押して、各シナリオの解説を表示します。' },
+            's1': { title: 'シナリオ1: P制御 (弱)', text: 'Kpが小さいと、重力に抗う力が弱く、目標高度に全く届きません。スコアも低くなります。' },
+            's2': { title: 'シナリオ2: P制御 (強)', text: 'Kpを大きくすると上昇力は増しますが、Kiがないため重力と釣り合う位置（目標より下）で安定してしまいます（定常偏差）。最終偏差が大きいため減点されます。' },
+            's3': { title: 'シナリオ3: PD制御 (振動抑制)', text: 'P制御にKdを追加すると、ブレーキが効いて振動を抑えることができます。しかし、Kiがないため定常偏差は残ったままです。' },
+            's4': { title: 'シナリオ4: PID制御 (最適)', text: 'Kiが定常偏差を解消し、Kdが振動を抑えることで、素早く目標高度に到達し安定します。これがPID制御の力です。' },
+            's5': { title: 'シナリオ5: P制御 + 外乱', text: 'P制御だけでは、外乱（下向きの突風）が加わると、さらに大きく高度が下がってしまいます。' },
+            's6': { title: 'シナリオ6: PD制御 + 外乱', text: 'PD制御は外乱にある程度応答できますが、Kiがないため、外乱が加わり続けると定常偏差が残ります。' },
+            's7': { title: 'シナリオ7: PID制御 + 外乱', text: 'PID制御は、外乱が加わってもKiの力でそれを補償し、目標高度に復帰することができます。これが最もロバスト（頑強）な制御であり、高スコアが期待できます。' },
+            's8': { title: 'シナリオ8: PID制御 (高スコア)', text: '各パラメータをバランス良く調整することで、速く、正確に、そして安定して目標高度に到達できます。スコアも非常に高くなります。' }
+        };
+
+
+        function setupControlBindings(key) {
+            const { slider, input } = controls[key];
+            slider.addEventListener('input', (e) => {
+                input.value = parseFloat(e.target.value).toFixed(1);
+            });
+            input.addEventListener('change', (e) => {
+                let value = parseFloat(e.target.value);
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                if (isNaN(value)) value = slider.value;
+                value = Math.max(min, Math.min(max, value));
+                e.target.value = value.toFixed(1);
+                slider.value = value;
+            });
+        }
+        
+        function updateDisturbanceButton() {
+            if (isDisturbanceOn) {
+                disturbanceToggleBtn.classList.remove('bg-stone-400');
+                disturbanceToggleBtn.classList.add('bg-orange-500');
+                disturbanceStateText.textContent = 'ON';
+            } else {
+                disturbanceToggleBtn.classList.add('bg-stone-400');
+                disturbanceToggleBtn.classList.remove('bg-orange-500');
+                disturbanceStateText.textContent = 'OFF';
+            }
+        }
+
+        function runSimulation() {
+            const Kp = parseFloat(controls.kp.input.value);
+            const Ki = parseFloat(controls.ki.input.value);
+            const Kd = parseFloat(controls.kd.input.value);
+            const m = 0.5;
+            const g = 9.8;
+            const c = 0.2;
+            const disturbanceMag = isDisturbanceOn ? -15.0 : 0.0;
+            const disturbanceTime = 10.0;
+            
+            let y = 0.0, vy = 0.0, errorIntegral = 0.0;
+            
+            const dt = 0.01;
+            const duration = 20.0;
+            const steps = duration / dt;
+            let timeInZone = 0;
+            let totalControlVariation = 0;
+
+            const timeData = [], altitudeData = [], targetData = [], controlInputData = [], disturbanceData = [];
+
+            for (let i = 0; i <= steps; i++) {
+                const currentTime = i * dt;
+                timeData.push(currentTime);
+                altitudeData.push(y);
+                targetData.push(targetAltitude);
+
+                if (Math.abs(targetAltitude - y) <= targetZoneThreshold) {
+                    timeInZone += dt;
+                }
+
+                const error = targetAltitude - y;
+                errorIntegral += error * dt;
+                let u = Kp * error + Ki * errorIntegral - Kd * vy;
+                
+                const clipped_u = Math.max(0, Math.min(u, maxThrust));
+                controlInputData.push(clipped_u);
+                
+                if (i > 0) {
+                    totalControlVariation += Math.abs(clipped_u - controlInputData[i-1]);
+                }
+
+                let currentDisturbance = (currentTime >= disturbanceTime) ? disturbanceMag : 0;
+                disturbanceData.push(currentDisturbance);
+
+                const resistanceForce = -c * vy;
+                const a = (clipped_u - m * g + currentDisturbance + resistanceForce) / m;
+                vy += a * dt;
+                y += vy * dt;
+                if(y < 0) { y = 0; vy = 0;}
+            }
+            
+            const timeScore = (timeInZone / duration) * 100;
+            const finalError = Math.abs(targetAltitude - y);
+            const errorPenalty = Math.min(50, finalError * 5); 
+            const stabilityPenalty = Math.min(50, totalControlVariation / 100);
+            const finalScore = Math.round(Math.max(0, timeScore - errorPenalty - stabilityPenalty));
+
+            document.getElementById('pid-game-score').textContent = finalScore;
+            document.getElementById('pid-game-result').innerHTML = `(滞在:${Math.round(timeScore)} - 偏差減点:${Math.round(errorPenalty)} - 安定性減点:${Math.round(stabilityPenalty)})`;
+
+            scoreHistory.push({ score: finalScore, Kp, Ki, Kd });
+            if (scoreHistory.length > 10) scoreHistory.shift();
+            updateScoreHistoryDisplay();
+
+            updateChart(timeData, altitudeData, targetData, controlInputData);
+            startAnimation(timeData, altitudeData, controlInputData, disturbanceData);
+        }
+        
+        function updateScoreHistoryDisplay() {
+            const scoreListEl = document.getElementById('score-list');
+            const averageScoreEl = document.getElementById('average-score-display');
+            scoreListEl.innerHTML = ''; 
+
+            if (scoreHistory.length === 0) {
+                scoreListEl.innerHTML = '<li class="text-stone-400">まだ記録がありません</li>';
+                averageScoreEl.textContent = '平均スコア: --';
+                return;
+            }
+
+            [...scoreHistory].reverse().forEach(record => {
+                const li = document.createElement('li');
+                li.innerHTML = `スコア: <span class="font-bold">${record.score}点</span> (P:${record.Kp}, I:${record.Ki}, D:${record.Kd})`;
+                scoreListEl.appendChild(li);
+            });
+
+            const totalScore = scoreHistory.reduce((sum, record) => sum + record.score, 0);
+            const averageScore = totalScore / scoreHistory.length;
+            averageScoreEl.textContent = `平均スコア: ${averageScore.toFixed(1)}点`;
+        }
+
+        function startAnimation(timeData, altitudeData, controlInputData, disturbanceData) {
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
+            const duration = timeData[timeData.length - 1] * 1000;
+            let startTime = null;
+            const altitudeValueEl = document.getElementById('altitude-value');
+            const controlInputValueEl = document.getElementById('control-input-value');
+            const disturbanceDisplayValueEl = document.getElementById('disturbance-display-value');
+            const elapsedTimeValueEl = document.getElementById('elapsed-time-value');
+            const deviationDisplayValueEl = document.getElementById('deviation-display-value');
+
+            function animate(timestamp) {
+                if (!startTime) startTime = timestamp;
+                const elapsedTime = timestamp - startTime;
+                const currentSimTime = elapsedTime / 1000;
+                const dataIndex = Math.min(Math.floor(currentSimTime / 0.01), altitudeData.length - 1);
+                
+                const currentAltitude = altitudeData[dataIndex];
+                const altPercent = (currentAltitude / 40) * 100;
+                droneEl.style.bottom = `calc(${altPercent}% - 20px)`;
+
+                altitudeValueEl.textContent = currentAltitude.toFixed(2);
+                
+                const deviation = targetAltitude - currentAltitude;
+                deviationDisplayValueEl.textContent = (deviation >= 0 ? '+' : '') + deviation.toFixed(3);
+
+                const currentControlInput = controlInputData[dataIndex];
+                const thrustPercentage = Math.max(-100, Math.min(100, (currentControlInput / maxThrust) * 100));
+                controlInputValueEl.textContent = (thrustPercentage >= 0 ? '+' : '') + thrustPercentage.toFixed(1) + `% (${currentControlInput.toFixed(1)}N)`;
+
+                const currentDisturbance = disturbanceData[dataIndex];
+                disturbanceDisplayValueEl.textContent = (currentDisturbance >= 0 ? '+' : '') + currentDisturbance.toFixed(1);
+
+                elapsedTimeValueEl.textContent = currentSimTime.toFixed(1);
+
+                if (elapsedTime < duration) {
+                    animationFrameId = requestAnimationFrame(animate);
+                } else {
+                    elapsedTimeValueEl.textContent = (duration/1000).toFixed(1);
+                }
+            }
+            animationFrameId = requestAnimationFrame(animate);
+        }
+
+        function updateChart(time, altitude, target, controlInput) {
+            if (responseChart) responseChart.destroy();
+            const ctx = chartCanvas.getContext('2d');
+            responseChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: time,
+                    datasets: [
+                        { label: 'ドローンの高度 (m)', data: altitude, borderColor: 'rgb(59, 130, 246)', borderWidth: 2, pointRadius: 0, tension: 0.1, yAxisID: 'y' },
+                        { label: '目標高度 (m)', data: target, borderColor: 'rgb(234, 179, 8)', borderWidth: 2, pointRadius: 0, borderDash: [5, 5], yAxisID: 'y' },
+                        { label: '推力 (N)', data: controlInput, borderColor: 'rgb(239, 68, 68)', borderWidth: 1.5, pointRadius: 0, tension: 0.1, yAxisID: 'y1', borderDash: [3, 3], hidden: false }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'linear', title: { display: true, text: '時間 (s)' } },
+                        y: { type: 'linear', position: 'left', title: { display: true, text: '高度 (m)' }, min: 0, max: 40 },
+                        y1: { type: 'linear', position: 'right', title: { display: true, text: '推力 (N)' }, grid: { drawOnChartArea: false }, min: 0, max: 25 }
+                    },
+                    plugins: { 
+                        legend: { display: true, position: 'top' },
+                        tooltip: { mode: 'index', intersect: false } 
+                    },
+                    animation: { duration: 0 }
+                }
+            });
+        }
+        
+        function updateExplanation(scenarioKey) {
+            const content = explanations[scenarioKey];
+            explanationDiv.innerHTML = `<h4 class="font-bold text-lg text-blue-800 mb-2">${content.title}</h4><p>${content.text}</p>`;
+        }
+        
+        // Event Listeners
+        Object.keys(controls).forEach(key => setupControlBindings(key));
+        runButton.addEventListener('click', runSimulation);
+        resetScoresBtn.addEventListener('click', () => {
+            scoreHistory = [];
+            updateScoreHistoryDisplay();
+        });
+        disturbanceToggleBtn.addEventListener('click', () => {
+            isDisturbanceOn = !isDisturbanceOn;
+            updateDisturbanceButton();
+        });
+        toggleScenariosBtn.addEventListener('click', () => {
+            const isHidden = scenariosContainer.classList.toggle('hidden');
+            toggleScenariosBtn.textContent = isHidden ? 'シナリオを開く ▼' : 'シナリオを閉じる ▲';
+        });
+        scenarioButtons.forEach((button) => {
+            button.addEventListener('click', () => {
+                const scenarioData = {
+                    kp: button.dataset.kp,
+                    ki: button.dataset.ki,
+                    kd: button.dataset.kd
+                };
+                
+                isDisturbanceOn = (button.dataset.disturbance === 'on');
+                updateDisturbanceButton();
+                
+                Object.keys(scenarioData).forEach(key => {
+                    if (controls[key] && scenarioData[key] !== undefined) {
+                        controls[key].slider.value = scenarioData[key];
+                        controls[key].input.value = parseFloat(scenarioData[key]).toFixed(1);
+                    }
+                });
+                
+                runSimulation();
+                const scenarioIndex = Array.from(scenarioButtons).indexOf(button);
+                updateExplanation(`s${scenarioIndex + 1}`);
+            });
+        });
+        
+        window.addEventListener('load', () => {
+            const targetZoneEl = document.getElementById('target-zone');
+            const targetMarkerLine = document.getElementById('target-marker-line');
+            
+            const maxAltitude = 40.0;
+            const targetPercent = (targetAltitude / maxAltitude) * 100;
+            const zoneHeightPercent = (targetZoneThreshold * 2 / maxAltitude) * 100;
+
+            targetMarkerLine.style.bottom = `${targetPercent}%`;
+            targetZoneEl.style.height = `${zoneHeightPercent}%`;
+            targetZoneEl.style.bottom = `calc(${targetPercent}% - ${zoneHeightPercent / 2}%)`;
+
+            for (const key in controls) {
+               controls[key].input.value = parseFloat(controls[key].slider.value).toFixed(1);
+            }
+            updateDisturbanceButton();
+            runSimulation();
+            updateExplanation('default');
+        });
+    </script>
+</body>
+</html>
+
