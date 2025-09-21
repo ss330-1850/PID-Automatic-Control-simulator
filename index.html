@@ -30,13 +30,12 @@
             position: absolute;
             left: 50%;
             transform: translateX(-50%);
-            transition: bottom 0.05s linear;
         }
     </style>
 </head>
 <body class="bg-stone-50 text-stone-800">
 
-    <header class="bg-white shadow-md sticky top-0 z-10">
+    <header class="bg-white shadow-md">
         <div class="container mx-auto px-6 py-4">
             <h1 class="text-2xl font-bold text-blue-700">ドローン版PID制御シミュレータ</h1>
             <p class="text-stone-600 mt-1">ドローンの高度維持を通じて、PID制御の力を体験しよう。</p>
@@ -96,8 +95,11 @@
                         <div id="target-marker-line" class="absolute w-full border-t-2 border-dashed border-green-500"></div>
                         <div id="drone" style="bottom: 0;">🚁</div>
                         <div class="absolute bottom-1 right-1 text-xs text-stone-500">0m</div>
-                        <div class="absolute top-1 right-1 text-xs text-stone-500">40m</div>
+                        <div class="absolute top-1 right-1 text-xs text-stone-500">20m</div>
                      </div>
+                     <button id="run-button" class="w-full max-w-sm mx-auto mt-6 bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-300 block">
+                        シミュレーション実行
+                    </button>
                 </div>
                 <!-- Controls -->
                 <div class="lg:w-96 bg-white p-6 rounded-lg shadow-lg">
@@ -105,7 +107,7 @@
                     <div id="pid-game-info" class="mb-4 p-3 bg-blue-50 rounded-lg text-center">
                         <div class="text-sm text-stone-500">総合スコア</div>
                         <div id="pid-game-score" class="text-2xl font-bold text-blue-700">0</div>
-                        <div id="pid-game-result" class="mt-2 text-xs font-bold text-blue-800 h-6 flex justify-around"></div>
+                        <div id="pid-game-result" class="mt-2 text-sm font-bold text-blue-800 h-6 flex justify-around"></div>
                     </div>
                     
                     <div class="mb-6">
@@ -152,9 +154,6 @@
                         </div>
                     </div>
                     
-                    <button id="run-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 transition duration-300 mt-6">
-                        シミュレーション実行
-                    </button>
                      <div id="score-history" class="mt-4 text-left">
                         <div class="flex justify-between items-center mb-2">
                             <h4 class="font-semibold">スコア履歴 (最新10回)</h4>
@@ -374,7 +373,7 @@
                 const dataIndex = Math.min(Math.floor(currentSimTime / 0.01), altitudeData.length - 1);
                 
                 const currentAltitude = altitudeData[dataIndex];
-                const altPercent = (currentAltitude / 40) * 100;
+                const altPercent = (currentAltitude / 20) * 100;
                 droneEl.style.bottom = `calc(${altPercent}% - 20px)`;
 
                 altitudeValueEl.textContent = currentAltitude.toFixed(2);
@@ -417,7 +416,7 @@
                     responsive: true, maintainAspectRatio: false,
                     scales: {
                         x: { type: 'linear', title: { display: true, text: '時間 (s)' } },
-                        y: { type: 'linear', position: 'left', title: { display: true, text: '高度 (m)' }, min: 0, max: 40 },
+                        y: { type: 'linear', position: 'left', title: { display: true, text: '高度 (m)' }, min: 0, max: 20 },
                         y1: { type: 'linear', position: 'right', title: { display: true, text: '推力 (N)' }, grid: { drawOnChartArea: false }, min: 0, max: 25 }
                     },
                     plugins: { 
@@ -477,7 +476,7 @@
             const targetZoneEl = document.getElementById('target-zone');
             const targetMarkerLine = document.getElementById('target-marker-line');
             
-            const maxAltitude = 40.0;
+            const maxAltitude = 20.0;
             const targetPercent = (targetAltitude / maxAltitude) * 100;
             const zoneHeightPercent = (targetZoneThreshold * 2 / maxAltitude) * 100;
 
